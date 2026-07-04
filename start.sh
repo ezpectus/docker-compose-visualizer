@@ -19,4 +19,4 @@ elif command -v open >/dev/null 2>&1; then
     (sleep 2 && open http://localhost:5173) &        # macOS
 fi
 
-npm run dev
+NO_COLOR=1 npm run dev
