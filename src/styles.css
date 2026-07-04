@@ -127,7 +127,6 @@ body,
 .editor-pane {
   display: flex;
   flex-direction: column;
-  transition: width 0.25s ease;
   overflow: hidden;
 }
 

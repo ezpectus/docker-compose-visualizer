@@ -1,4 +1,4 @@
-import { Component, ReactNode } from "react";
+import { Component, ReactNode, ErrorInfo } from "react";
 
 interface Props {
   children: ReactNode;
@@ -13,6 +13,16 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(err: Error): State {
     return { hasError: true, message: err.message };
+  }
+
+  componentDidCatch(err: Error, info: ErrorInfo) {
+    console.error("[ErrorBoundary] Graph crashed:", err, info);
+  }
+
+  componentDidUpdate(prevProps: Props) {
+    if (this.state.hasError && prevProps.children !== this.props.children) {
+      this.setState({ hasError: false, message: "" });
+    }
   }
 
   render() {

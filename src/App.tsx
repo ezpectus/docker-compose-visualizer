@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   Background,
   Controls,
@@ -8,6 +8,7 @@ import ReactFlow, {
   Node,
   applyNodeChanges,
   NodeChange,
+  ReactFlowInstance,
 } from "reactflow";
 import Editor from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
@@ -18,7 +19,7 @@ import { SAMPLE_YAML } from "./sample";
 
 const nodeTypes = { service: ServiceNode, network: NetworkNode, volume: VolumeNode };
 
-function loadUIState() {
+function loadUIState(): { editorWidth?: number; collapsed?: boolean } {
   try {
     return JSON.parse(localStorage.getItem("dcv:ui") || "{}");
   } catch {
@@ -36,9 +37,12 @@ export default function App() {
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<{ clear: () => void } | null>(null);
   const highlightTimerRef = useRef<number>();
+  const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+  const prevNodeIdsRef = useRef<Set<string>>(new Set());
 
-  const [editorWidth, setEditorWidth] = useState(() => loadUIState().editorWidth ?? 42);
-  const [collapsed, setCollapsed] = useState(() => loadUIState().collapsed ?? false);
+  const ui = loadUIState();
+  const [editorWidth, setEditorWidth] = useState(ui.editorWidth ?? 42);
+  const [collapsed, setCollapsed] = useState(ui.collapsed ?? false);
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
 
@@ -72,6 +76,11 @@ export default function App() {
       const result = parseCompose(yamlText);
       setError(result.error);
       if (result.error) return;
+      const prevIds = new Set(positionsRef.current.keys());
+      const newIds = new Set(result.nodes.map((n) => n.id));
+      for (const id of prevIds) {
+        if (!newIds.has(id)) positionsRef.current.delete(id);
+      }
       setNodes(
         result.nodes.map((n) => {
           const saved = positionsRef.current.get(n.id);
@@ -79,6 +88,20 @@ export default function App() {
         })
       );
       setEdges(result.edges);
+      const currentIds = new Set(result.nodes.map((n) => n.id));
+      let structureChanged = false;
+      for (const id of currentIds) {
+        if (!prevNodeIdsRef.current.has(id)) { structureChanged = true; break; }
+      }
+      if (!structureChanged && currentIds.size !== prevNodeIdsRef.current.size) {
+        structureChanged = true;
+      }
+      prevNodeIdsRef.current = currentIds;
+      if (structureChanged) {
+        requestAnimationFrame(() => {
+          rfInstanceRef.current?.fitView({ padding: 0.15, minZoom: 0.4, maxZoom: 1.2 });
+        });
+      }
     }, 250);
     return () => window.clearTimeout(debounceRef.current);
   }, [yamlText]);
@@ -86,7 +109,11 @@ export default function App() {
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setNodes((nds) => {
       const next = applyNodeChanges(changes, nds);
-      for (const n of next) positionsRef.current.set(n.id, n.position);
+      for (const c of changes) {
+        if (c.type === "position" && c.position) {
+          positionsRef.current.set(c.id, c.position);
+        }
+      }
       return next;
     });
   }, []);
@@ -116,7 +143,7 @@ export default function App() {
 
   // Click a node -> reveal & highlight its YAML line
   const onNodeClick = useCallback(
-    (_: unknown, node: Node) => {
+    (_: React.MouseEvent, node: Node) => {
       const editor = editorRef.current;
       if (!editor) return;
       const line = findEntityLine(yamlText, node.id);
@@ -146,7 +173,7 @@ export default function App() {
       if (!draggingRef.current) return;
       const pct = (e.clientX / window.innerWidth) * 100;
       if (pct < 15) {
-        setCollapsed(true);
+        if (!collapsedRef.current) setCollapsed(true);
       } else {
         if (collapsedRef.current) setCollapsed(false);
         setEditorWidth(Math.min(70, Math.max(15, pct)));
@@ -171,6 +198,7 @@ export default function App() {
     input.onchange = async () => {
       const file = input.files?.[0];
       if (file) setYamlText(await file.text());
+      input.value = "";
     };
     input.click();
   }, []);
@@ -190,6 +218,9 @@ export default function App() {
     if (!result.error) {
       setNodes(result.nodes);
       setEdges(result.edges);
+      requestAnimationFrame(() => {
+        rfInstanceRef.current?.fitView({ padding: 0.15, minZoom: 0.4, maxZoom: 1.2 });
+      });
     }
   }, [yamlText]);
 
@@ -235,10 +266,17 @@ export default function App() {
             onChange={(v) => setYamlText(v ?? "")}
             options={{
               minimap: { enabled: false },
-              fontSize: 13,
+              fontSize: 13.5,
+              fontFamily: '"JetBrains Mono", Consolas, "Courier New", monospace',
+              fontLigatures: true,
+              lineHeight: 20,
               tabSize: 2,
               scrollBeyondLastLine: false,
               automaticLayout: true,
+              renderWhitespace: "selection",
+              cursorBlinking: "smooth",
+              smoothScrolling: true,
+              padding: { top: 8, bottom: 8 },
             }}
           />
           {error && <div className="error-bar">⚠ {error}</div>}
@@ -262,8 +300,12 @@ export default function App() {
             onNodeClick={onNodeClick}
             onConnect={onConnect}
             onEdgesDelete={onEdgesDelete}
+            onInit={(inst) => { rfInstanceRef.current = inst; }}
             deleteKeyCode={["Delete", "Backspace"]}
             fitView
+            fitViewOptions={{ padding: 0.15, minZoom: 0.4, maxZoom: 1.2 }}
+            minZoom={0.2}
+            maxZoom={2}
             proOptions={{ hideAttribution: true }}
           >
             <Background color="#232840" gap={24} size={1.5} />

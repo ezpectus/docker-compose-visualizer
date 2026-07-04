@@ -50,12 +50,18 @@ Handled in `addLinkToYaml` (`src/lib/parser.ts`):
 
 ## Layout & positions
 
-- Initial layout: **dagre**, `rankdir: LR`, `nodesep: 60`, `ranksep: 120`, `edgesep: 40`.
+- Initial layout: **dagre**, `rankdir: LR`, `edgesep: 40`, `marginx: 40`, `marginy: 40`.
+- **Adaptive spacing** — `ranksep` and `nodesep` scale with node count:
+  - ≤5 nodes: `ranksep: 160`, `nodesep: 80` (spread out, no clumping)
+  - ≤10 nodes: `ranksep: 120`, `nodesep: 60` (balanced)
+  - >10 nodes: `ranksep: 80`, `nodesep: 45` (compact, no overlap)
 - Service node heights are **dynamic** — calculated from the number of ports,
   volumes, env vars, and image/build rows. This prevents node overlap on
   complex compose files.
 - User-dragged positions are cached in `positionsRef` (a `Map<nodeId, xy>`)
   in `App.tsx`, so re-parsing on every keystroke does not reset the layout.
+  Stale entries (removed nodes) are cleaned up on each parse.
+- `fitView` is called after each parse and after Re-layout to keep the graph centered.
 - "Re-layout" button clears the cache and re-runs dagre.
 
 ## File map
@@ -74,9 +80,12 @@ Handled in `addLinkToYaml` (`src/lib/parser.ts`):
 - Invalid YAML → `parseCompose` returns `error`; the last valid graph stays
   on screen and an error bar appears under the editor.
 - Graph edits on invalid YAML are rejected (`addLinkToYaml` returns `null`).
+- Cyclic `depends_on` chains are detected via BFS (`hasCycle`) — cyclic edges
+  are skipped to prevent dagre layout issues.
 - Unhandled exceptions in the graph subtree are caught by `ErrorBoundary`
-  (`src/components/ErrorBoundary.tsx`). The graph shows a crash message while
-  the editor remains functional — fix the YAML and the graph rebuilds.
+  (`src/components/ErrorBoundary.tsx`). The boundary resets when children change
+  (new YAML → componentDidUpdate clears error state). The graph shows a crash message while the editor remains
+  functional — fix the YAML and the graph rebuilds.
 
 ## Editor ↔ graph navigation
 
@@ -103,6 +112,8 @@ reads the saved state once — no re-parse, no extra render.
   nodes whose `data` actually changed, not the entire graph on every keystroke.
 - YAML parsing is debounced (250 ms) to keep typing responsive.
 - Monaco editor refs are typed (`IStandaloneCodeEditor`), not `any`.
+- Monaco CDN URL is pinned to an exact version for stable loading.
+- `positionsRef` is cleaned up on each parse — removed nodes don't leak memory.
 
 ## Extension points
 

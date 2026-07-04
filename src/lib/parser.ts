@@ -27,7 +27,7 @@ function asStringList(value: unknown): string[] {
 }
 
 export function parseCompose(text: string): ParseResult {
-  let doc;
+  let doc: ReturnType<typeof parseDocument>;
   try {
     doc = parseDocument(text);
     if (doc.errors.length > 0) {
@@ -38,15 +38,18 @@ export function parseCompose(text: string): ParseResult {
   }
 
   const json = doc.toJS() ?? {};
-  const services: Record<string, any> = json.services ?? {};
-  const networks: Record<string, any> = json.networks ?? {};
-  const volumes: Record<string, any> = json.volumes ?? {};
+  const services: Record<string, Record<string, unknown>> = json.services ?? {};
+  const networks: Record<string, unknown> = json.networks ?? {};
+  const volumes: Record<string, unknown> = json.volumes ?? {};
 
   const nodes: Node[] = [];
   const edges: Edge[] = [];
+  const serviceNames = new Set(Object.keys(services));
+  const networkNames = new Set(Object.keys(networks));
+  const volumeNames = new Set(Object.keys(volumes));
 
   for (const [name, svc] of Object.entries(services)) {
-    const s = svc ?? {};
+    const s = (svc ?? {}) as Record<string, unknown>;
     const info: ServiceInfo = {
       name,
       image: typeof s.image === "string" ? s.image : undefined,
@@ -58,7 +61,7 @@ export function parseCompose(text: string): ParseResult {
       environmentCount: s.environment
         ? Array.isArray(s.environment)
           ? s.environment.length
-          : Object.keys(s.environment).length
+          : Object.keys(s.environment as object).length
         : 0,
     };
     nodes.push({
@@ -69,6 +72,8 @@ export function parseCompose(text: string): ParseResult {
     });
 
     for (const dep of info.dependsOn) {
+      if (!serviceNames.has(dep)) continue;
+      if (hasCycle("service:" + name, "service:" + dep, edges)) continue;
       edges.push({
         id: `dep:${name}->${dep}`,
         source: `service:${name}`,
@@ -80,6 +85,7 @@ export function parseCompose(text: string): ParseResult {
       });
     }
     for (const net of info.networks) {
+      if (!networkNames.has(net)) continue;
       edges.push({
         id: `net:${name}->${net}`,
         source: `service:${name}`,
@@ -90,15 +96,14 @@ export function parseCompose(text: string): ParseResult {
     }
     for (const vol of info.volumes) {
       const volName = vol.split(":")[0];
-      if (volumes[volName] !== undefined) {
-        edges.push({
-          id: `vol:${name}->${volName}`,
-          source: `service:${name}`,
-          target: `volume:${volName}`,
-          type: "smoothstep",
-          className: "edge-volume",
-        });
-      }
+      if (!volumeNames.has(volName)) continue;
+      edges.push({
+        id: `vol:${name}->${volName}`,
+        source: `service:${name}`,
+        target: `volume:${volName}`,
+        type: "smoothstep",
+        className: "edge-volume",
+      });
     }
   }
 
@@ -143,8 +148,11 @@ function getNodeHeight(n: Node): number {
 }
 
 function layout(nodes: Node[], edges: Edge[]): Node[] {
+  const count = nodes.length;
+  const ranksep = count <= 5 ? 160 : count <= 10 ? 120 : 80;
+  const nodesep = count <= 5 ? 80 : count <= 10 ? 60 : 45;
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 120, edgesep: 40 });
+  g.setGraph({ rankdir: "LR", nodesep, ranksep, edgesep: 40, marginx: 40, marginy: 40 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of nodes) {
     const w = NODE_WIDTH[n.type ?? "service"] ?? 240;
@@ -209,8 +217,8 @@ export function removeLinkFromYaml(text: string, edgeId: string): string | null 
   const key = kind === "dep" ? "depends_on" : kind === "net" ? "networks" : "volumes";
   const list = svc.get(key);
   if (isSeq(list)) {
-    const idx = list.items.findIndex((it: any) => {
-      const v = String(it?.value ?? it);
+    const idx = list.items.findIndex((it) => {
+      const v = String((it as { value?: unknown })?.value ?? it);
       return kind === "vol" ? v.split(":")[0] === target : v === target;
     });
     if (idx >= 0) {
@@ -228,10 +236,10 @@ export function removeLinkFromYaml(text: string, edgeId: string): string | null 
   return null;
 }
 
-function appendToListKey(doc: any, map: YAMLMap, key: string, value: string) {
+function appendToListKey(doc: ReturnType<typeof parseDocument>, map: YAMLMap, key: string, value: string) {
   const existing = map.get(key);
   if (isSeq(existing)) {
-    const has = existing.items.some((it: any) => String(it?.value ?? it) === value);
+    const has = existing.items.some((it) => String((it as { value?: unknown })?.value ?? it) === value);
     if (!has) existing.add(doc.createNode(value));
   } else if (isMap(existing)) {
     if (!existing.has(value)) existing.set(value, null);
@@ -250,7 +258,7 @@ export function findEntityLine(text: string, nodeId: string): number | null {
   const section = doc.get(sectionKey);
   if (!isMap(section)) return null;
   for (const item of section.items) {
-    const key: any = item.key;
+    const key = item.key as { value?: unknown; range?: [number, number, number] } | null;
     if (key && String(key.value) === name && key.range) {
       const offset: number = key.range[0];
       return text.slice(0, offset).split("\n").length;
@@ -261,5 +269,22 @@ export function findEntityLine(text: string, nodeId: string): number | null {
 
 function splitId(id: string): [string, string] {
   const i = id.indexOf(":");
+  if (i < 0) return [id, ""];
   return [id.slice(0, i), id.slice(i + 1)];
+}
+
+function hasCycle(source: string, target: string, edges: Edge[]): boolean {
+  if (source === target) return true;
+  const visited = new Set<string>();
+  const queue = [target];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (node === source) return true;
+    if (visited.has(node)) continue;
+    visited.add(node);
+    for (const e of edges) {
+      if (e.source === node) queue.push(e.target);
+    }
+  }
+  return false;
 }

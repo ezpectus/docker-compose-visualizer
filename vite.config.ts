@@ -4,12 +4,12 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: {
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          react: ["react", "react-dom"],
-          reactflow: ["reactflow"],
-          yaml: ["yaml", "dagre"],
+        manualChunks(id: string) {
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) return "react";
+          if (id.includes("node_modules/reactflow")) return "reactflow";
+          if (id.includes("node_modules/yaml") || id.includes("node_modules/dagre")) return "yaml";
         },
       },
     },
