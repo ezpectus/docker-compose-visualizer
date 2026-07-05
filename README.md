@@ -49,6 +49,19 @@ No more 3 AM arrow-drawing on paper.
 - **Collapsible editor** — toggle via toolbar button, <kbd>Ctrl+B</kbd>, or double-click the splitter. Drag all the way left to auto-collapse
 - **Persistent UI state** — editor width and collapsed state survive reloads via `localStorage` (debounced writes)
 - **Crash-resistant** — `ErrorBoundary` around the graph means a crash kills the graph, not the editor. Fix the YAML → graph rebuilds
+- **Multi-file mode** — open several compose files at once (microservice stacks):
+  services are color-coded per file, and networks with the same name are merged
+  into shared nodes so you can see how your stacks connect to each other.
+  Toggle between **Multi** (merged view) and **Single** (per-file editing) with the toolbar button.
+  Hover a file tab to highlight that file's nodes and dim the rest
+- **Search / Filter** — type in the search box to dim non-matching nodes.
+  Instantly find the service you need in a 30+ node graph
+- **Validation warnings** — the parser detects common mistakes and shows them in a warning bar:
+  - **Port conflicts** — two services mapping the same host port
+  - **Dangling references** — service references an undefined network, volume, or `depends_on` target
+- **Import from URL** — paste a GitHub raw or blob URL to load a compose file directly.
+  Great for reviewing someone else's repo without cloning
+- **Export as PNG** — one click to download the graph as an image for Slack, PRs, or documentation
 - **Open / Download** — load any compose file, export the edited result
 - **Dark mode only.** Obviously.
 
