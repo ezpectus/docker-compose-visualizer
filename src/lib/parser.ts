@@ -97,11 +97,12 @@ function detectWarnings(
       }
     }
 
-    // Dangling volume refs
+    // Dangling volume refs (skip bind mounts: ./, ../, /, ~/)
     const vols = asStringList(s.volumes);
     for (const vol of vols) {
       const volName = vol.split(":")[0];
-      if (volName && !volumeNames.has(volName) && !volName.startsWith("./") && !volName.startsWith("/")) {
+      const isBindMount = /^(\.{1,2}\/|\/|~\/)/.test(volName);
+      if (volName && !volumeNames.has(volName) && !isBindMount) {
         warnings.push(`⚠ ${label}: references undefined volume "${volName}"`);
       }
     }

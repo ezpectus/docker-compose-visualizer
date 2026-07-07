@@ -37,6 +37,30 @@ body,
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 13, 20, 0.75);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.drop-overlay-box {
+  padding: 24px 40px;
+  border: 2px dashed var(--blue);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 0 30px var(--glow-blue);
 }
 
 .toolbar {

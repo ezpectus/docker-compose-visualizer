@@ -53,9 +53,17 @@ No more 3 AM arrow-drawing on paper.
   services are color-coded per file, and networks with the same name are merged
   into shared nodes so you can see how your stacks connect to each other.
   Toggle between **Multi** (merged view) and **Single** (per-file editing) with the toolbar button.
+  If your files live in different folders, click **Open** once per folder —
+  each selection is added to the existing set instead of replacing it.
+  Opening a file with a name that's already loaded and identical content is a
+  no-op; if the content differs (e.g. two different projects both named
+  `docker-compose.yml`), it's added as a new tab with a `(2)` suffix instead
+  of silently overwriting the original.
+  You can also **drag and drop** `.yml`/`.yaml` files anywhere on the app to add them.
   Hover a file tab to highlight that file's nodes and dim the rest
-- **Search / Filter** — type in the search box to dim non-matching nodes.
-  Instantly find the service you need in a 30+ node graph
+- **Search / Filter** — type in the search box to dim non-matching nodes
+  by service name or image (e.g. `postgres`). Instantly find the service
+  you need in a 30+ node graph
 - **Validation warnings** — the parser detects common mistakes and shows them in a warning bar:
   - **Port conflicts** — two services mapping the same host port
   - **Dangling references** — service references an undefined network, volume, or `depends_on` target

@@ -105,8 +105,8 @@ The parser (`detectWarnings` in `src/lib/parser.ts`) checks for common mistakes:
 - **Dangling `depends_on` references** — a service depends on another service
   that doesn't exist in the same file.
 - **Dangling volume references** — a service mounts a named volume that is not
-  declared in the top-level `volumes` section (bind mounts starting with `./` or
-  `/` are excluded).
+  declared in the top-level `volumes` section (bind mounts starting with `./`,
+  `../`, `/`, or `~/` are excluded).
 
 Warnings are returned in `ParseResult.warnings` and displayed in an orange
 warning bar below the editor. They do not block the graph from rendering.
@@ -119,14 +119,42 @@ objects and produces a single merged graph:
 - **Networks** with the same name across files are merged into one node.
   Shared networks (used by 2+ files) display a glow indicator and file count.
 - **Services and volumes** are file-scoped with prefixed IDs (`<idx>#<name>`)
-  to prevent name collisions.
+  to prevent name collisions. This models independently-run `docker-compose`
+  projects that only connect through shared `external: true` networks — the
+  common reverse-proxy pattern (one proxy stack + several app stacks). It is
+  *not* the `docker-compose -f a.yml -f b.yml` deep-merge model, so
+  cross-file `depends_on` is correctly flagged as a dangling reference: it
+  would not work at runtime between separate compose projects either.
 - **File badges** — each service and volume node shows a colored badge
   indicating which file it belongs to.
 - **Error tolerance** — if one file has invalid YAML, the others still render.
-  The error is shown in the error bar.
+  The error is shown in the error bar; warnings from valid files are still
+  shown alongside it (error and warnings are independent, non-exclusive UI).
 - **Toggle** — the toolbar `🔗 Multi / 🔗 Single` button switches between
   merged view (read-only graph) and per-file editing (full graph editing).
 - **Tab hover** — hovering a file tab dims all nodes not belonging to that file.
+
+### Adding files
+
+The native file picker (`Open` button) can only browse one folder per
+invocation, so `openFile` / drag-and-drop both funnel through a shared
+`addFiles` helper (`App.tsx`) that **merges** newly picked files into whatever
+is already loaded, instead of replacing it:
+
+- Click `Open` (or drop files) once per folder to accumulate a multi-file set.
+- The browser never exposes a file's source folder — only its bare name —
+  and many unrelated projects use the literal filename `docker-compose.yml`.
+  Matching purely by name would silently overwrite an unrelated project's
+  file on a name clash, so `addFiles` instead:
+  - **same name + identical content** → no-op (already loaded).
+  - **same name + different content** → treated as a different file and
+    auto-renamed with a `(2)`/`(3)`/... suffix, so nothing is silently lost.
+- If the combined set collapses to exactly one file, the app reverts to
+  single-file mode automatically.
+- Drag-and-drop accepts any `.yml`/`.yaml` file dropped anywhere on the app
+  (`onDrop` on the root `.app` element), with a visual overlay while dragging.
+  Monaco's own `dropIntoEditor` is disabled so file drops over the editor
+  pane bubble up to the app-level handler instead of being inserted as text.
 
 ## Editor ↔ graph navigation
 
@@ -158,18 +186,23 @@ reads the saved state once — no re-parse, no extra render.
 
 ## Search / Filter
 
-The toolbar search input filters nodes by name. Non-matching nodes get the
-`node-dimmed` CSS class (opacity 0.2). This is a display-only filter — it does
-not modify the graph or YAML. The filter is applied via `displayedNodes`
-`useMemo` in `App.tsx`, which maps over `nodes` and sets `className` per node.
+The toolbar search input filters nodes by **name or image** (case-insensitive
+substring match, e.g. `postgres` finds any service using a postgres image).
+Non-matching nodes get the `node-dimmed` CSS class (opacity 0.2), and edges
+connected to a dimmed node get `edge-dimmed`. This is a display-only filter —
+it does not modify the graph or YAML. Applied via the `displayedNodes` /
+`displayedEdges` `useMemo` in `App.tsx`.
 
 ## Export as PNG
 
-The `📷 PNG` button serializes the React Flow viewport SVG elements via
-`XMLSerializer`, composites them onto a `<canvas>` with the dark background,
-and exports via `canvas.toBlob`. No external dependencies — uses the browser's
-native Canvas and SVG APIs. The minimap and controls are excluded because only
-the `.react-flow__viewport` subtree is serialized.
+The `📷 PNG` button clones the `.react-flow__viewport` DOM node, inlines every
+element's computed styles (so it renders correctly outside the live document),
+and embeds the clone inside an SVG `<foreignObject>`. This is necessary
+because React Flow renders nodes as HTML (`div`s), not SVG — a naive
+`XMLSerializer` pass over the SVG layer alone would only capture the edges,
+not the service/network/volume node boxes. The resulting SVG is rasterized
+onto a `<canvas>` (dark background) via an `Image` + `drawImage`, then
+exported with `canvas.toBlob`. No external dependencies — pure browser APIs.
 
 ## Import from URL
 

@@ -37,6 +37,7 @@ function loadUIState(): { editorWidth?: number; collapsed?: boolean } {
 
 export default function App() {
   const [yamlText, setYamlText] = useState<string>(SAMPLE_YAML);
+  const [singleFileName, setSingleFileName] = useState<string | null>(null);
   const [files, setFiles] = useState<ComposeFile[]>([]);
   const [activeFile, setActiveFile] = useState(0);
   const [multiMode, setMultiMode] = useState(false);
@@ -74,15 +75,22 @@ export default function App() {
   useEffect(() => {
     window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
-      localStorage.setItem("dcv:ui", JSON.stringify({ editorWidth, collapsed }));
+      try {
+        localStorage.setItem("dcv:ui", JSON.stringify({ editorWidth, collapsed }));
+      } catch {
+        // localStorage may be unavailable (e.g. Safari private browsing) — ignore
+      }
     }, 300);
     return () => window.clearTimeout(saveTimerRef.current);
   }, [editorWidth, collapsed]);
 
-  // Ctrl+B toggles the editor panel (like VS Code)
+  // Ctrl+B (Cmd+B on macOS) toggles the editor panel (like VS Code).
+  // Uses e.code (physical key) instead of e.key, since e.key depends on the
+  // active keyboard layout — with a Cyrillic layout active, physically
+  // pressing "B" produces "и" in e.key, silently breaking the shortcut.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key.toLowerCase() === "b") {
+      if ((e.ctrlKey || e.metaKey) && e.code === "KeyB") {
         e.preventDefault();
         toggleEditor();
       }
@@ -262,6 +270,65 @@ export default function App() {
     };
   }, []);
 
+  // Merges newly loaded files into whatever is already open. The browser
+  // never exposes a file's source folder, only its bare name — and many
+  // unrelated projects literally use the filename "docker-compose.yml", so
+  // matching purely by name is unsafe: silently overwriting on a name clash
+  // would destroy an unrelated project's file. Instead:
+  //   - identical name + identical content → no-op (it's the same file,
+  //     already loaded — this also makes re-adding a dropped/opened file
+  //     harmless).
+  //   - identical name + different content → treated as a DIFFERENT file
+  //     (from another folder) and auto-renamed with a " (2)" suffix so
+  //     nothing is silently lost. The user can close whichever tab they
+  //     don't need.
+  // Used by both the "Open" button and drag-and-drop, so the user can
+  // accumulate files from different folders one at a time.
+  const addFiles = useCallback(
+    (loaded: ComposeFile[]) => {
+      if (loaded.length === 0) return;
+      const base: ComposeFile[] =
+        files.length > 0 ? files : singleFileName ? [{ name: singleFileName, text: yamlText }] : [];
+      const combined = [...base];
+      for (const f of loaded) {
+        const clash = combined.find((b) => b.name === f.name);
+        if (!clash) {
+          combined.push(f);
+        } else if (clash.text === f.text) {
+          // Same name, same content — already loaded, nothing to do.
+          continue;
+        } else {
+          let n = 2;
+          const rename = (nm: string) => nm.replace(/(\.ya?ml)$/i, ` (${n})$1`);
+          let newName = rename(f.name);
+          while (combined.some((b) => b.name === newName)) {
+            n++;
+            newName = rename(f.name);
+          }
+          combined.push({ name: newName, text: f.text });
+        }
+      }
+
+      positionsRef.current.clear();
+      if (combined.length <= 1) {
+        const only = combined[0];
+        setFiles([]);
+        setMultiMode(false);
+        setYamlText(only.text);
+        setSingleFileName(only.name);
+      } else {
+        if (files.length === 0) setActiveFile(0);
+        setFiles(combined);
+        setMultiMode(true);
+      }
+    },
+    [files, yamlText, singleFileName]
+  );
+
+  // Opens files via the native file picker. Click "Open" repeatedly, once
+  // per folder, to build a multi-file set from files scattered across
+  // different folders (the native file picker can only browse one folder
+  // per invocation).
   const openFile = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
@@ -270,30 +337,64 @@ export default function App() {
     input.onchange = async () => {
       const selected = Array.from(input.files ?? []);
       if (selected.length === 0) return;
-      if (selected.length === 1) {
-        setFiles([]);
-        setMultiMode(false);
-        setYamlText(await selected[0].text());
-      } else {
-        const loaded: ComposeFile[] = await Promise.all(
-          selected.map(async (f) => ({ name: f.name, text: await f.text() }))
-        );
-        positionsRef.current.clear();
-        setFiles(loaded);
-        setActiveFile(0);
-        setMultiMode(true);
-      }
+      const loaded: ComposeFile[] = await Promise.all(
+        selected.map(async (f) => ({ name: f.name, text: await f.text() }))
+      );
+      addFiles(loaded);
       input.value = "";
     };
     input.click();
+  }, [addFiles]);
+
+  // Drag-and-drop: drop one or more .yml/.yaml files anywhere on the app.
+  // Files can be dragged in from separate Explorer/Finder windows one at a
+  // time, which is an easier way to combine files from different folders
+  // than the native "Open" picker.
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragCounterRef = useRef(0);
+  const onDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.types.includes("Files")) {
+      dragCounterRef.current += 1;
+      setIsDraggingFile(true);
+    }
   }, []);
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+  }, []);
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+    if (dragCounterRef.current === 0) setIsDraggingFile(false);
+  }, []);
+  const onDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current = 0;
+      setIsDraggingFile(false);
+      const dropped = Array.from(e.dataTransfer.files).filter((f) =>
+        /\.ya?ml$/i.test(f.name)
+      );
+      if (dropped.length === 0) return;
+      const loaded: ComposeFile[] = await Promise.all(
+        dropped.map(async (f) => ({ name: f.name, text: await f.text() }))
+      );
+      addFiles(loaded);
+    },
+    [addFiles]
+  );
 
   const closeFile = useCallback(
     (idx: number) => {
       const next = files.filter((_, i) => i !== idx);
       positionsRef.current.clear();
       if (next.length <= 1) {
-        if (next.length === 1) setYamlText(next[0].text);
+        if (next.length === 1) {
+          setYamlText(next[0].text);
+          setSingleFileName(next[0].name);
+        } else {
+          setSingleFileName(null);
+        }
         setActiveFile(0);
         setFiles([]);
         setMultiMode(false);
@@ -369,16 +470,23 @@ export default function App() {
     const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     img.onload = () => {
-      ctx.drawImage(img, 0, 0);
       URL.revokeObjectURL(url);
-      canvas.toBlob((pngBlob) => {
-        if (!pngBlob) return;
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(pngBlob);
-        a.download = "compose-graph.png";
-        a.click();
-        URL.revokeObjectURL(a.href);
-      });
+      try {
+        ctx.drawImage(img, 0, 0);
+        canvas.toBlob((pngBlob) => {
+          if (!pngBlob) {
+            setError("PNG export failed — your browser blocked the image export. Try Chrome/Edge, or zoom/pan the graph and try again.");
+            return;
+          }
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(pngBlob);
+          a.download = "compose-graph.png";
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+      } catch {
+        setError("PNG export failed — your browser blocked the image export. Try Chrome/Edge instead.");
+      }
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -400,6 +508,7 @@ export default function App() {
       setFiles([]);
       setMultiMode(false);
       setYamlText(text);
+      setSingleFileName(null);
       setError(null);
       setUrlInput("");
     } catch (e) {
@@ -436,8 +545,10 @@ export default function App() {
     const displayedNodes = nodes.map((n) => {
       let dimmed = false;
       if (q) {
-        const name = (n.data as { name?: string }).name?.toLowerCase() ?? "";
-        if (!name.includes(q)) dimmed = true;
+        const data = n.data as { name?: string; image?: string };
+        const name = data.name?.toLowerCase() ?? "";
+        const image = data.image?.toLowerCase() ?? "";
+        if (!name.includes(q) && !image.includes(q)) dimmed = true;
       }
       if (hoveredFile !== null && !dimmed) {
         const m = n.id.match(/^(\w+):(\d+)#/);
@@ -456,7 +567,18 @@ export default function App() {
   }, [nodes, edges, search, hoveredFile]);
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {isDraggingFile && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-box">📄 Drop .yml files to add them</div>
+        </div>
+      )}
       <header className="toolbar">
         <div className="brand">
           <span className="brand-icon">🐳</span> Compose Visualizer
@@ -470,14 +592,19 @@ export default function App() {
           <input
             className="search-input"
             type="text"
-            placeholder="Search services..."
+            placeholder="Search name or image..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           <button onClick={toggleEditor} title="Toggle editor (Ctrl+B)">
             {collapsed ? "▸ Editor" : "◂ Editor"}
           </button>
-          <button onClick={openFile}>Open</button>
+          <button
+            onClick={openFile}
+            title="Select multiple files at once, or click Open again to add files from another folder"
+          >
+            Open
+          </button>
           {canMulti && (
             <button
               onClick={() => setMultiMode((m) => !m)}
@@ -564,10 +691,13 @@ export default function App() {
               cursorBlinking: "smooth",
               smoothScrolling: true,
               padding: { top: 8, bottom: 8 },
+              // Let file drops bubble up to the app-level drag-and-drop
+              // handler instead of Monaco inserting the dropped file as text.
+              dropIntoEditor: { enabled: false },
             }}
           />
           {error && <div className="error-bar">⚠ {error}</div>}
-          {warnings.length > 0 && !error && (
+          {warnings.length > 0 && (
             <div className="warning-bar">
               {warnings.map((w, i) => (
                 <div key={i}>{w}</div>
