@@ -121,7 +121,11 @@ export function parseCompose(text: string): ParseResult {
   try {
     doc = parseDocument(text);
     if (doc.errors.length > 0) {
-      return { nodes: [], edges: [], error: doc.errors[0].message, warnings: [] };
+      const msg = doc.errors[0].message;
+      const hint = /keys must be unique/i.test(msg)
+        ? " — looks like multiple compose files were pasted as one. Use \"Open\" and select all files together for multi-file mode instead of pasting them into a single document."
+        : "";
+      return { nodes: [], edges: [], error: msg + hint, warnings: [] };
     }
   } catch (e) {
     return { nodes: [], edges: [], error: (e as Error).message, warnings: [] };
