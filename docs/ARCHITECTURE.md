@@ -181,7 +181,9 @@ reads the saved state once — no re-parse, no extra render.
   nodes whose `data` actually changed, not the entire graph on every keystroke.
 - YAML parsing is debounced (250 ms) to keep typing responsive.
 - Monaco editor refs are typed (`IStandaloneCodeEditor`), not `any`.
-- Monaco CDN URL is pinned to an exact version for stable loading.
+- Monaco loads from CDN via `@monaco-editor/react`'s built-in loader
+  (`@monaco-editor/loader`). No explicit CDN URL pinning in app code — the
+  loader uses its own default version.
 - `positionsRef` is cleaned up on each parse — removed nodes don't leak memory.
 
 ## Search / Filter
